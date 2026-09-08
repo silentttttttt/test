@@ -1,0 +1,129 @@
+name: Build WebBrowse IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Find WebBrowse Xcode project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="$(find . -name 'WebBrowse.xcodeproj' -type d -print -quit)"
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: WebBrowse.xcodeproj was not found."
+            echo "Make sure the WebBrowse project is committed to the repository."
+            exit 1
+          fi
+
+          echo "Found project: $PROJECT"
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Verify WebBrowse scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${{ steps.project.outputs.project }}"
+
+          xcodebuild -project "$PROJECT" -list
+
+      - name: Clean build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${{ steps.project.outputs.project }}"
+
+          xcodebuild clean \
+            -project "$PROJECT" \
+            -scheme WebBrowse \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Build unsigned archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${{ steps.project.outputs.project }}"
+          ARCHIVE="$RUNNER_TEMP/WebBrowse.xcarchive"
+
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme WebBrowse \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE" \
+            SKIP_INSTALL=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+          echo "Archive created:"
+          ls -la "$ARCHIVE/Products/Applications/"
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="$RUNNER_TEMP/WebBrowse.xcarchive"
+          OUTPUT="$RUNNER_TEMP/WebBrowse-Unsigned.ipa"
+
+          APP="$(find "$ARCHIVE/Products/Applications" \
+            -maxdepth 1 \
+            -name '*.app' \
+            -type d \
+            -print -quit)"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: No .app was produced by the archive."
+            exit 1
+          fi
+
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+
+          cd "$RUNNER_TEMP"
+
+          /usr/bin/zip -qry "$OUTPUT" Payload
+
+          echo "IPA created:"
+          ls -lh "$OUTPUT"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebBrowse-Unsigned-IPA
+          path: ${{ runner.temp }}/WebBrowse-Unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
