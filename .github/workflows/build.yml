@@ -48,18 +48,28 @@ jobs:
             -project "WebBrowse-Ultimate-3.6-40-Bug-Fix-Full-Audit/wb35/WebBrowse.xcodeproj" \
             -scheme "WebBrowse" \
             -configuration Release \
+            -destination 'generic/platform=iOS' \
             -archivePath "$PWD/build/WebBrowse.xcarchive"
 
       - name: Export IPA
         run: |
           cat << EOF > ExportOptions.plist
-          {
-            "method": "development",
-            "compileBitcode": false,
-            "signingStyle": "automatic",
-            "stripSwiftSymbols": true,
-            "destination": "export"
-          }
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>development</string>
+              <key>compileBitcode</key>
+              <false/>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>destination</key>
+              <string>export</string>
+          </dict>
+          </plist>
           EOF
 
           xcodebuild -exportArchive \
