@@ -1,4 +1,4 @@
-Name: Build and Export IPA
+name: Build and Export IPA
 
 on:
   workflow_dispatch:
