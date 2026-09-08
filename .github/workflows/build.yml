@@ -1,4 +1,4 @@
-name: Build and Export IPA
+Name: Build and Export IPA
 
 on:
   workflow_dispatch:
@@ -18,30 +18,6 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Set up Temporary Keychain
-        run: |
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings -t 3600 -l build.keychain
-
-      - name: Import Certificate and Provisioning Profile
-        env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE }}
-        run: |
-          if [ -n "$CERTIFICATE_P12_BASE64" ]; then
-            echo "$CERTIFICATE_P12_BASE64" | base64 --decode > certificate.p12
-            security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            security set-keychain-partition-list -S "apple-tool:,apple:" -s -k "" build.keychain
-          fi
-
-          if [ -n "$PROVISIONING_PROFILE_BASE64" ]; then
-            mkdir -p ~/Library/MobileDevice/Provisioning%20Profiles
-            echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
-          fi
-
       - name: Build Archive
         run: |
           xcodebuild archive \
@@ -49,36 +25,21 @@ jobs:
             -scheme "WebBrowse" \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$PWD/build/WebBrowse.xcarchive"
-
-      - name: Export IPA
-        run: |
-          cat << EOF > ExportOptions.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>compileBitcode</key>
-              <false/>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>stripSwiftSymbols</key>
-              <true/>
-              <key>destination</key>
-              <string>export</string>
-          </dict>
-          </plist>
-          EOF
-
-          xcodebuild -exportArchive \
             -archivePath "$PWD/build/WebBrowse.xcarchive" \
-            -exportPath "$PWD/build/ipa" \
-            -exportOptionsPlist ExportOptions.plist
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package Unsigned IPA
+        run: |
+          mkdir -p "$PWD/build/Payload"
+          cp -r "$PWD/build/WebBrowse.xcarchive/Products/Applications/WebBrowse.app" "$PWD/build/Payload/"
+          cd "$PWD/build"
+          zip -r WebBrowse.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WebBrowse-IPA
-          path: build/ipa/*.ipa
+          name: WebBrowse-Unsigned-IPA
+          path: build/WebBrowse.ipa
