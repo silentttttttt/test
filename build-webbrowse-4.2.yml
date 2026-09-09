@@ -1,0 +1,133 @@
+name: Build WebBrowse 4.2 IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Locate the main WebBrowse project
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Searching for WebBrowse.xcodeproj..."
+
+          MAIN_PROJECT=""
+          while IFS= read -r -d '' project; do
+            pbx="$project/project.pbxproj"
+            [ -f "$pbx" ] || continue
+
+            # Prefer the actual app project. Ignore any old Packet Tunnel project.
+            if grep -q 'name = WebBrowse;' "$pbx" && \
+               grep -q 'VideoDetector.swift' "$pbx" && \
+               grep -q 'VideoCandidate.swift' "$pbx" && \
+               ! grep -q 'PacketTunnelProvider.swift' "$pbx"; then
+              MAIN_PROJECT="$project"
+              break
+            fi
+          done < <(find . -type d -name 'WebBrowse.xcodeproj' -print0 | sort -z)
+
+          if [ -z "$MAIN_PROJECT" ]; then
+            echo "ERROR: Could not find the corrected WebBrowse app project."
+            echo "Projects found:"
+            find . -type d -name 'WebBrowse.xcodeproj' -print
+            exit 1
+          fi
+
+          echo "Using project: $MAIN_PROJECT"
+          echo "project=$MAIN_PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Verify project and scheme
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ steps.locate.outputs.project }}" \
+            -list
+
+      - name: Clean WebBrowse
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ steps.locate.outputs.project }}" \
+            -scheme WebBrowse \
+            -configuration Release \
+            clean \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Build unsigned archive
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build
+
+          xcodebuild archive \
+            -project "${{ steps.locate.outputs.project }}" \
+            -scheme WebBrowse \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/WebBrowse.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Find built WebBrowse.app
+        id: app
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/WebBrowse.xcarchive/Products/Applications/WebBrowse.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: WebBrowse.app was not created."
+            find "$PWD/build/WebBrowse.xcarchive" -maxdepth 5 -type d -name '*.app' -print || true
+            exit 1
+          fi
+
+          echo "Found: $APP"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "${{ steps.app.outputs.app }}" build/Payload/WebBrowse.app
+
+          cd build
+          /usr/bin/zip -qry WebBrowse-4.2-Unsigned.ipa Payload
+
+      - name: Verify IPA structure
+        run: |
+          set -euo pipefail
+          test -f build/WebBrowse-4.2-Unsigned.ipa
+          unzip -l build/WebBrowse-4.2-Unsigned.ipa | grep -E 'Payload/WebBrowse.app/$|Payload/WebBrowse.app/Info.plist'
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebBrowse-4.2-Unsigned-IPA
+          path: build/WebBrowse-4.2-Unsigned.ipa
+          if-no-files-found: error
